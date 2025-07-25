@@ -1,45 +1,54 @@
 using System.Buffers;
 using UnityEngine;
 
+
 public struct HexTile
 {
     public Vector3 position;
+    public Color color;
     public int terrainType;
-    public Transform tileObject;
+    
 
-
-    public HexTile(Vector3 pos, int terrain, Transform tileObject = null)
+    public HexTile(Vector3 pos, int terrain, Color? color = null)
     {
         position = pos;
         terrainType = terrain;
-        this.tileObject = tileObject;
+        this.color = color ?? Color.white; // Use provided color or default to white
     }
 }
 
+
 public class MapGenScript : MonoBehaviour
 {
+
     private const float HEX_VERTICAL_OFFSET_MULTIPLIER = 0.8660254f; // Mathf.Sqrt(3) / 2 for perfect hex
 
     public int mapWidth = 10; // Number of hex tiles in the x direction
     public int mapHeight = 10; // Number of hex tiles in the z direction
     public float mapElevationMultiplier = 1;
     public float mapScale = 1;
-
-    public bool mapTimeOffset;
-    public Vector2 mapOffsetDirection = Vector2.right;
-
+    public Gradient heightRemapCurve;
+    public Gradient heightColorGradient;
     public float cellSize = 1.0f; // Size of each hex tile
-
-    public Vector3 TestPosition = new Vector3(0, 0, 0); // Test position for debugging
 
     public bool cellSizeFromPrefab = true; // Use cell size from prefab if true
     public Transform hexTilePrefab; // Prefab for the hex tile
-
-    public HexTile[,] map;
+    
+    HexTile[,] map;
+    Matrix4x4[] matrices;
+    RenderParams rp;
+    public int seed = 0;
+    MaterialPropertyBlock props;
 
     void Awake()
     {
+        seed = Random.Range(-100000, 100000);
+        matrices = new Matrix4x4[mapWidth * mapHeight];
         map = new HexTile[mapWidth, mapHeight];
+
+        var mr = hexTilePrefab.GetComponent<MeshRenderer>();
+        rp = new RenderParams(mr.sharedMaterial);
+        props = new MaterialPropertyBlock();
     }
     void Start()
     {
@@ -53,49 +62,55 @@ public class MapGenScript : MonoBehaviour
 
     void Update()
     {
-        Vector2Int gridPos = GetGridPosition(TestPosition.x, TestPosition.z);
-        Debug.Log($"Grid Position: {gridPos.x}, {gridPos.y}");
-        map[gridPos.x, gridPos.y].tileObject.GetComponent<Renderer>().materials[1].color = Color.red;
 
-        if (Input.GetKey(KeyCode.G))
+        if (Input.GetKeyDown(KeyCode.R))
         {
-            for (int x = 0; x < mapWidth; x++)
-            {
-                for (int y = 0; y < mapHeight; y++)
-                {
-                    Destroy(map[x, y].tileObject.gameObject);
-                }
-            }
             PopulateMap();
-            DisplayMap();
         }
+
+        DisplayMap();
+
+
     }
 
     void PopulateMap()
     {
         for (int x = 0; x < mapWidth; x++)
-        {
             for (int z = 0; z < mapHeight; z++)
             {
-                float terrainHeight = Mathf.PerlinNoise(x * mapScale + (mapTimeOffset ? mapOffsetDirection.x * Time.time : 0), z * mapScale + (mapTimeOffset ? mapOffsetDirection.y * Time.time : 0)) * mapElevationMultiplier;
+                float h = Mathf.PerlinNoise(x * mapScale + seed, z * mapScale + seed);
 
-                Vector3 XZPos = GetWorldPosition(x, z);
-                map[x, z].position = new Vector3(XZPos.x, terrainHeight, XZPos.z);
+                Vector3 basePos = GetWorldPosition(x, z);
+                basePos.y = heightRemapCurve.Evaluate(h).b * mapElevationMultiplier;
+
+                Color color = heightColorGradient.Evaluate(basePos.y);
+                map[x, z] = new HexTile(basePos, 0, color);
             }
-        }
     }
 
     void DisplayMap()
     {
+        var colors = new Vector4[mapWidth * mapHeight];
         for (int x = 0; x < mapWidth; x++)
-        {
             for (int z = 0; z < mapHeight; z++)
             {
-                Vector3 worldPos = map[x, z].position;
-                Transform hexTile = Instantiate(hexTilePrefab, worldPos, Quaternion.identity, transform);
-                hexTile.name = $"HexTile_{x}_{z}";
-                map[x, z] = new HexTile(worldPos, 0, hexTile);
+                int index = x * mapHeight + z;
+                matrices[index] = Matrix4x4.TRS(map[x, z].position, Quaternion.identity, Vector3.one);
+                colors[index] = map[x, z].color;
             }
+
+        var mesh = hexTilePrefab.GetComponent<MeshFilter>().sharedMesh;
+        var mats = hexTilePrefab.GetComponent<MeshRenderer>().sharedMaterials;
+
+        props.Clear();
+        props.SetVectorArray("_Color", colors); // this is the magic line
+
+        for (int sub = 0; sub < mats.Length; sub++)
+        {
+            var rpSub = new RenderParams(mats[sub])
+            { matProps = props };
+
+            Graphics.RenderMeshInstanced(rpSub, mesh, sub, matrices, matrices.Length);
         }
     }
 
@@ -143,10 +158,5 @@ public class MapGenScript : MonoBehaviour
             new Vector3(xPos, 0, 0) * cellSize +
             new Vector3(0, 0, zPos) * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER +
             ((zPos % 2) == 1 ? new Vector3(1, 0, 0) * cellSize * 0.5f : Vector3.zero);
-    }
-
-    void OnDrawGizmos()
-    {
-        Gizmos.DrawWireSphere(TestPosition, 0.1f);
     }
 }
