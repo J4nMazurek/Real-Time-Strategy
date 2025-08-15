@@ -49,8 +49,6 @@ public class CloudGenerationScript : MonoBehaviour
             print("Matrices not initialized or size mismatch. Call RebuildMatrices first.");
             return;
         }
-        cloudMaterial.SetFloat("_CloudHeight", cloudHeight);
-        cloudMaterial.SetFloat("_MidY", altitude + (cloudHeight / 2));
         Graphics.DrawMeshInstanced(tileMesh, 0, cloudMaterial, matrices, matrices.Length);
     }
 }

@@ -12,7 +12,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  version: 9
+  version: 10
 --- !u!21 &2100000
 Material:
   serializedVersion: 8
@@ -51,16 +51,20 @@ Material:
         m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
-    - _CloudChunksPower: 6.98
+    - _CloudChunksPower: 0.3
     - _CloudChunksScale: 0.01
-    - _CloudCutoff: 0
+    - _CloudCoverage: 5
+    - _CloudCutoff: 0.83
     - _CloudHeight: 3
-    - _CloudScale: 0.02
-    - _CloudSoftness: 1.68
+    - _CloudScale: 0.014
+    - _CloudSoftness: 1.5
+    - _CloudSparseness: 8.47
+    - _FadeOutDistance: 0.07
     - _MidY: 41.5
     - _QueueControl: 0
     - _QueueOffset: 1
     - _TimeMultiplier: 10
-    m_Colors: []
+    m_Colors:
+    - _CloudColor: {r: 1, g: 1, b: 1, a: 0.54509807}
   m_BuildTextureStacks: []
   m_AllowLocking: 1

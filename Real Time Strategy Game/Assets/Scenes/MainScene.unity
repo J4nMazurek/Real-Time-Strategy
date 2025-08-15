@@ -537,7 +537,7 @@ MonoBehaviour:
   cloudMaterial: {fileID: 2100000, guid: d6168f28e97151440a5cfe60c7014909, type: 2}
   map: {fileID: 982986430}
   tileMesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
-  layers: 10
+  layers: 1
   cloudHeight: 3
   altitude: 40
   cloudBuffer: 200
