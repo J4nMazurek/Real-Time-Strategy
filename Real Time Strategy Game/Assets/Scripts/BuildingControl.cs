@@ -28,7 +28,7 @@ public class BuildingControl : MonoBehaviour
             selectedPosition = hit.point;
             var gridPosition = map.GetGridPosition(selectedPosition.x, selectedPosition.z);
             selectedTile = map.GetWorldPosition(gridPosition.x, gridPosition.y, false, true);
-            if (map.map[gridPosition.x, gridPosition.y] != null)
+            if (gridPosition.x >= 0 && gridPosition.x < map.mapWidth && gridPosition.y >= 0 && gridPosition.y < map.mapHeight)
             {
                 print(map.map[gridPosition.x, gridPosition.y].resources[0]);
             }

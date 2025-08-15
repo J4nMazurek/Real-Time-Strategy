@@ -5,11 +5,13 @@ public class CameraMovementScript : MonoBehaviour
 {
     [Header("Dependencies")]
     public Transform PitchObject;//controls the pitch
+    public MapGenScript map;
 
     [Header("Movement Settings")]
     public float camMovementSpeed;
     public float movementDampeningForce;
     public float sprintMultiplier;
+    public float mapBuffer;
     Vector3 velocity;
 
     [Header("Rotation Settings")]
@@ -35,6 +37,7 @@ public class CameraMovementScript : MonoBehaviour
     private Vector2 controls;
     private Vector2 savedMousePos;
     private Camera cam;
+    Vector2 mapSize;
 
     void Awake()
     {
@@ -43,23 +46,28 @@ public class CameraMovementScript : MonoBehaviour
         inputActions.Enable();
         yaw = transform.eulerAngles.y;
         yawTarget = yaw;
+        mapSize.x = map.mapWidth * map.cellSize;
+        mapSize.y = map.mapHeight * map.cellSize * MapGenScript.HEX_VERTICAL_OFFSET_MULTIPLIER;
     }
 
 
     void UpdateMovement()
     {
-
         controls = inputActions.Player.Move.ReadValue<Vector2>();
-    
-        Vector3 forward = transform.forward; forward.y = 0; forward.Normalize();
-        Vector3 right   = transform.right;   right.y = 0; right.Normalize();
-        Vector3 moveDir = forward * controls.y + right * controls.x;
 
+        Vector3 forward = transform.forward; forward.y = 0; forward.Normalize();
+        Vector3 right = transform.right; right.y = 0; right.Normalize();
+        Vector3 moveDir = forward * controls.y + right * controls.x;
         Vector3 targetVel = moveDir * camMovementSpeed * (inputActions.Player.Sprint.IsPressed() ? sprintMultiplier : 1);
         var accel = (targetVel - velocity) * movementDampeningForce;
         velocity += accel * Time.deltaTime;
 
         transform.position += velocity * Time.deltaTime;
+        transform.position = new Vector3(
+            Mathf.Clamp(transform.position.x, 0, mapSize.x),
+            transform.position.y,
+            Mathf.Clamp(transform.position.z, 0, mapSize.y)
+        );
     }
 
     void UpdateYawRotation()

@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections.Generic;
+using UnityEngine.InputSystem;
 
 public enum ResourceType { Oil, Metal }
 
@@ -44,7 +45,7 @@ public class HexTile
 
 public class MapGenScript : MonoBehaviour
 {
-    private const float HEX_VERTICAL_OFFSET_MULTIPLIER = 0.8660254f;
+    public const float HEX_VERTICAL_OFFSET_MULTIPLIER = 0.8660254f;
 
     [Header("Dependencies")]
     public Transform waterPrefab;
@@ -66,6 +67,9 @@ public class MapGenScript : MonoBehaviour
     public float waterLevel = 0f;
     public float waterBuffer = 10f;
 
+    public bool stepHeight;
+    public float stepHeightResolution = 1;
+
     [Header("Seed")]
     public bool randomSeed;
     [Tooltip("Random seed for map generation. If set to 0, a random seed will be used.")]
@@ -85,6 +89,8 @@ public class MapGenScript : MonoBehaviour
     public ResourceSettings[] resourceSettings;
 
     // computed
+    [Header("Computed, Don't Touch")]
+    public Vector2 physicalMapSize;
     private int chunksX;
     private int chunksZ;
     public HexTile[,] map;
@@ -97,8 +103,9 @@ public class MapGenScript : MonoBehaviour
     private Vector2[] baseUVs;
     private int[] baseTris;
 
-    // parent for all chunk GameObjects
+    // parents for all GameObjects
     private Transform chunkParent;
+    private Transform waterParent;
 
     GameObject WaterObject;
     void Awake()
@@ -124,6 +131,10 @@ public class MapGenScript : MonoBehaviour
         // create a container for chunks
         chunkParent = new GameObject("ChunkParent").transform;
         chunkParent.parent = this.transform;
+        waterParent = new GameObject("WaterParent").transform;
+        waterParent.parent = this.transform;
+
+
 
         var r = hexTilePrefab.GetComponent<Renderer>();
         tileTopYOffset = r.bounds.center.y + r.bounds.extents.y;
@@ -143,7 +154,7 @@ public class MapGenScript : MonoBehaviour
 
     void Update()
     {
-        if (Input.GetKeyDown(KeyCode.R))
+        if (Keyboard.current.rKey.wasPressedThisFrame)
         {
             if (randomSeed)
             {
@@ -158,6 +169,7 @@ public class MapGenScript : MonoBehaviour
 
     void PopulateMap()
     {
+        physicalMapSize = new Vector2(mapWidth * cellSize, mapHeight * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER);
         // 1) First pass: compute positions/heights and track global min/max (at tile SURFACE)
         float[,] surfY = new float[mapWidth, mapHeight];
         Vector3[,] worldPos = new Vector3[mapWidth, mapHeight];
@@ -183,6 +195,8 @@ public class MapGenScript : MonoBehaviour
                 int terrainType = CalculateTerrainTypes(pos.y);
 
                 pos.y = MapHeightModifier(pos.y);
+
+                if(stepHeight)  pos.y = Mathf.Round(pos.y * stepHeightResolution) / stepHeightResolution;
 
                 // surface height (not mesh center)
                 float surface = pos.y + tileTopYOffset;
@@ -257,9 +271,7 @@ public class MapGenScript : MonoBehaviour
                 {
                     var rs = resourceSettings[i];
                     int resourceTypeIndex = (int)rs.type;
-
-                    if (tile.terrainType < rs.minTerrainType || tile.terrainType > rs.maxTerrainType) continue;
-
+                    
                     if (rs.requireAboveWater && surfaceY < waterLevel)
                     {
                         tile.resources[resourceTypeIndex] = 0f;
@@ -302,62 +314,121 @@ public class MapGenScript : MonoBehaviour
             for (int cz = 0; cz < chunksZ; cz++)
             {
                 BuildChunk(cx, cz);
-
-                // Create water object for this chunk
-                var waterObj = Instantiate(waterPrefab.gameObject);
-                waterObj.name = $"ChunkWater_{cx}_{cz}";
-                waterObj.tag = "ChunkWater";
-                waterObj.transform.parent = transform;
-
-                // Calculate chunk bounds
-                int chunkTilesX = Mathf.Min(chunkSize, mapWidth - cx * chunkSize);
-                int chunkTilesZ = Mathf.Min(chunkSize, mapHeight - cz * chunkSize);
-
-                float chunkPosX = (cx * chunkSize + chunkTilesX * 0.5f) * cellSize;
-                float chunkPosZ = (cz * chunkSize + chunkTilesZ * 0.5f) * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER;
-
-                // Calculate water scale to cover the chunk bounds
-                var size = waterObj.GetComponent<Renderer>().bounds.size;
-                float waterScaleX = (chunkTilesX * cellSize) / size.x;
-                float waterScaleZ = (chunkTilesZ * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER) / size.z;
-
-                // Only add buffer to edges of the map and move by half buffer
-                float bufferOffsetX = 0f;
-                float bufferOffsetZ = 0f;
-                if (cx == 0)
-                {
-                    waterScaleX += waterBuffer / size.x;
-                    bufferOffsetX -= (waterBuffer * 0.5f);
-                }
-                if (cx == chunksX - 1)
-                {
-                    waterScaleX += waterBuffer / size.x;
-                    bufferOffsetX += (waterBuffer * 0.5f);
-                }
-                if (cz == 0)
-                {
-                    waterScaleZ += waterBuffer / size.z;
-                    bufferOffsetZ -= (waterBuffer * 0.5f);
-                }
-                if (cz == chunksZ - 1)
-                {
-                    waterScaleZ += waterBuffer / size.z;
-                    bufferOffsetZ += (waterBuffer * 0.5f);
-                }
-
-                waterObj.transform.position = new Vector3(chunkPosX + bufferOffsetX, waterLevel, chunkPosZ + bufferOffsetZ);
-                waterObj.transform.localScale = new Vector3(waterScaleX, 1, waterScaleZ);
+                GenerateWater(cx, cz);
             }
         }
     }
 
+    void GenerateWater(int cx, int cz)
+    {
+    var waterObj = Instantiate(waterPrefab.gameObject);
+    waterObj.name = $"ChunkWater_{cx}_{cz}";
+    waterObj.tag = "ChunkWater";
+    waterObj.transform.parent = waterParent;
+
+    // Calculate chunk bounds
+    int chunkTilesX = Mathf.Min(chunkSize, mapWidth - cx * chunkSize);
+    int chunkTilesZ = Mathf.Min(chunkSize, mapHeight - cz * chunkSize);
+
+    float chunkPosX = (cx * chunkSize + chunkTilesX * 0.5f) * cellSize;
+    float chunkPosZ = (cz * chunkSize + chunkTilesZ * 0.5f) * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER;
+
+    // Calculate water scale to cover the chunk bounds
+    var size = waterObj.GetComponent<Renderer>().bounds.size;
+    float waterScaleX = (chunkTilesX * cellSize) / size.x;
+    float waterScaleZ = (chunkTilesZ * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER) / size.z;
+
+    // Main chunk water (no buffer)
+    waterObj.transform.position = new Vector3(chunkPosX, waterLevel, chunkPosZ);
+    waterObj.transform.localScale = new Vector3(waterScaleX, 1, waterScaleZ);
+
+    // Add buffer planes only at map edges and corners
+    float chunkWorldMinX = cx * chunkSize * cellSize;
+    float chunkWorldMaxX = chunkWorldMinX + chunkTilesX * cellSize;
+    float chunkWorldMinZ = cz * chunkSize * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER;
+    float chunkWorldMaxZ = chunkWorldMinZ + chunkTilesZ * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER;
+
+    // Left edge
+    if (cx == 0)
+        CreateWaterPlane(
+            new Vector3(chunkWorldMinX - waterBuffer * 0.5f, 0, (chunkWorldMinZ + chunkWorldMaxZ) * 0.5f),
+            waterBuffer,
+            chunkWorldMaxZ - chunkWorldMinZ,
+            waterLevel,
+            $"EdgeWater_Left_{cx}_{cz}"
+        );
+    // Right edge
+    if (cx == chunksX - 1)
+        CreateWaterPlane(
+            new Vector3(chunkWorldMaxX + waterBuffer * 0.5f, 0, (chunkWorldMinZ + chunkWorldMaxZ) * 0.5f),
+            waterBuffer,
+            chunkWorldMaxZ - chunkWorldMinZ,
+            waterLevel,
+            $"EdgeWater_Right_{cx}_{cz}"
+        );
+    // Bottom edge
+    if (cz == 0)
+        CreateWaterPlane(
+            new Vector3((chunkWorldMinX + chunkWorldMaxX) * 0.5f, 0, chunkWorldMinZ - waterBuffer * 0.5f),
+            chunkWorldMaxX - chunkWorldMinX,
+            waterBuffer,
+            waterLevel,
+            $"EdgeWater_Bottom_{cx}_{cz}"
+        );
+    // Top edge
+    if (cz == chunksZ - 1)
+        CreateWaterPlane(
+            new Vector3((chunkWorldMinX + chunkWorldMaxX) * 0.5f, 0, chunkWorldMaxZ + waterBuffer * 0.5f),
+            chunkWorldMaxX - chunkWorldMinX,
+            waterBuffer,
+            waterLevel,
+            $"EdgeWater_Top_{cx}_{cz}"
+        );
+    // Corners
+    if (cx == 0 && cz == 0)
+        CreateWaterPlane(
+            new Vector3(chunkWorldMinX - waterBuffer * 0.5f, 0, chunkWorldMinZ - waterBuffer * 0.5f),
+            waterBuffer, waterBuffer, waterLevel, $"EdgeWater_CornerBL_{cx}_{cz}"
+        );
+    if (cx == 0 && cz == chunksZ - 1)
+        CreateWaterPlane(
+            new Vector3(chunkWorldMinX - waterBuffer * 0.5f, 0, chunkWorldMaxZ + waterBuffer * 0.5f),
+            waterBuffer, waterBuffer, waterLevel, $"EdgeWater_CornerTL_{cx}_{cz}"
+        );
+    if (cx == chunksX - 1 && cz == 0)
+        CreateWaterPlane(
+            new Vector3(chunkWorldMaxX + waterBuffer * 0.5f, 0, chunkWorldMinZ - waterBuffer * 0.5f),
+            waterBuffer, waterBuffer, waterLevel, $"EdgeWater_CornerBR_{cx}_{cz}"
+        );
+    if (cx == chunksX - 1 && cz == chunksZ - 1)
+        CreateWaterPlane(
+            new Vector3(chunkWorldMaxX + waterBuffer * 0.5f, 0, chunkWorldMaxZ + waterBuffer * 0.5f),
+            waterBuffer, waterBuffer, waterLevel, $"EdgeWater_CornerTR_{cx}_{cz}"
+        );
+}
+
+    void CreateWaterPlane(Vector3 center, float width, float length, float y, string name)
+    {
+        var go = Instantiate(waterPrefab.gameObject);
+        go.name = name;
+        go.tag = "ChunkWater";
+        go.transform.parent = waterParent;
+
+        var baseSize = go.GetComponent<Renderer>().bounds.size;
+        float sx = Mathf.Approximately(baseSize.x, 0f) ? 1f : width / baseSize.x;
+        float sz = Mathf.Approximately(baseSize.z, 0f) ? 1f : length / baseSize.z;
+
+        go.transform.position = new Vector3(center.x, y, center.z);
+        go.transform.localScale = new Vector3(sx, 1f, sz);
+    }
+
     void BuildChunk(int cx, int cz)
     {
-        var verts   = new List<Vector3>();
+        var verts = new List<Vector3>();
         var normals = new List<Vector3>();
-        var uvs     = new List<Vector2>();
-        var cols    = new List<Color>();
-        var tris    = new List<int>();
+        var uvs = new List<Vector2>();
+        var cols = new List<Color>();
+        var tris = new List<int>();
 
         // iterate tiles within this chunk
         for (int lx = 0; lx < chunkSize; lx++)
@@ -377,10 +448,10 @@ public class MapGenScript : MonoBehaviour
                 // add vertices, normals, uvs, colors
                 for (int i = 0; i < baseVerts.Length; i++)
                 {
-                    verts.Add    (baseVerts[i]   + tile.position);
-                    normals.Add  (baseNormals[i]);
-                    uvs.Add      (baseUVs[i]);
-                    cols.Add     (tile.color);
+                    verts.Add(baseVerts[i] + tile.position);
+                    normals.Add(baseNormals[i]);
+                    uvs.Add(baseUVs[i]);
+                    cols.Add(tile.color);
                 }
 
                 // add triangles (shifted by vertOffset)
@@ -398,15 +469,15 @@ public class MapGenScript : MonoBehaviour
             : UnityEngine.Rendering.IndexFormat.UInt16;
 
         mesh.SetVertices(verts);
-        mesh.SetNormals (normals);
-        mesh.SetUVs     (0, uvs);
-        mesh.SetColors  (cols);
+        mesh.SetNormals(normals);
+        mesh.SetUVs(0, uvs);
+        mesh.SetColors(cols);
         mesh.SetTriangles(tris, 0);
 
         // instantiate chunk GameObject
         var go = new GameObject($"Chunk_{cx}_{cz}");
-        go.transform.parent       = chunkParent;
-        go.transform.localPosition= Vector3.zero;
+        go.transform.parent = chunkParent;
+        go.transform.localPosition = Vector3.zero;
 
         var mf = go.AddComponent<MeshFilter>();
         mf.sharedMesh = mesh;
@@ -421,6 +492,7 @@ public class MapGenScript : MonoBehaviour
         mesh.UploadMeshData(true);
 
         go.isStatic = true;
+        go.layer = LayerMask.NameToLayer("Map");
     }
 
     float GenerateHeightMap(int x, int y, float scale, int seed, float lacunarity, float gain, int octaves)
@@ -444,28 +516,28 @@ public class MapGenScript : MonoBehaviour
     }
 
     float CalculateFalloff(int x, int z)
-{
-    float centerX = mapWidth * 0.5f;
-    float centerZ = mapHeight * 0.5f;
+    {
+        float centerX = mapWidth * 0.5f;
+        float centerZ = mapHeight * 0.5f;
 
-    float maxDistX = centerX;
-    float maxDistZ = centerZ;
+        float maxDistX = centerX;
+        float maxDistZ = centerZ;
 
-    float distX = Mathf.Abs(x - centerX) / maxDistX;
-    float distZ = Mathf.Abs(z - centerZ) / maxDistZ;
+        float distX = Mathf.Abs(x - centerX) / maxDistX;
+        float distZ = Mathf.Abs(z - centerZ) / maxDistZ;
 
-    float normalizedDist = Mathf.Max(distX, distZ);
+        float normalizedDist = Mathf.Max(distX, distZ);
 
-    if (normalizedDist < mapFalloffStartDistance)
-        return 1f;
+        if (normalizedDist < mapFalloffStartDistance)
+            return 1f;
 
-    float remappedDist = (normalizedDist - mapFalloffStartDistance) / (1 - mapFalloffStartDistance);
+        float remappedDist = (normalizedDist - mapFalloffStartDistance) / (1 - mapFalloffStartDistance);
 
-    float falloffValue = Mathf.Pow(1 - remappedDist, mapFalloffExponent);
+        float falloffValue = Mathf.Pow(1 - remappedDist, mapFalloffExponent);
 
-    float minFalloff = 0f;
-    return Mathf.Clamp(falloffValue, minFalloff, 1f);
-}
+        float minFalloff = 0f;
+        return Mathf.Clamp(falloffValue, minFalloff, 1f);
+    }
 
     public Vector2Int GetGridPosition(float worldX, float worldZ)
     {
