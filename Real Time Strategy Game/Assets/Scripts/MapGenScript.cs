@@ -1,7 +1,10 @@
 using UnityEngine;
 using System.Collections.Generic;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
+[System.Serializable]
 public enum ResourceType { Oil, Metal }
 
 [System.Serializable]
@@ -9,7 +12,8 @@ public class ResourceSettings
 {
     public ResourceType type;
 
-    [Range(0.001f, 1f)] public float noiseScale = 0.08f;  // spatial frequency
+    [Range(0.00001f, 0.2f)] public float noiseScale;  // spatial frequency
+    [Tooltip("The power that its going to be raised by")] public float power = 2; 
     public float maxAmount = 100f;
 
     // Constraints
@@ -88,9 +92,31 @@ public class MapGenScript : MonoBehaviour
     public bool generateResources = true;
     public ResourceSettings[] resourceSettings;
 
+    [Header("Overlay / Heatmap")]
+    public bool overlayEnabled = false;
+    public Material waterMaterial;
+    public float waterOpacity = 0.5f;
+    public Volume globalVolume;
+    public ResourceType currentResourceOverlayType = ResourceType.Oil;
+    public bool normalizePerMap = true;
+    private int vertsPerTile;
+
+    // Keep built chunks so we can recolor them quickly
+    private List<ChunkRecord> chunks = new();
+    private struct ChunkRecord
+    {
+        public Mesh mesh;
+        public int cx, cz;
+        public int tilesX, tilesZ;
+        // world tile coords in the same order we appended vertices
+        public List<Vector2Int> tileOrder;
+        // cached color array sized to mesh.vertexCount
+        public Color[] colors;
+    }
+
     // computed
-    [Header("Computed, Don't Touch")]
-    public Vector2 physicalMapSize;
+    [Header("Computed")]
+    public Vector2 physicalMapSize => new Vector2(mapWidth * cellSize, mapHeight * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER);
     private int chunksX;
     private int chunksZ;
     public HexTile[,] map;
@@ -107,7 +133,6 @@ public class MapGenScript : MonoBehaviour
     private Transform chunkParent;
     private Transform waterParent;
 
-    GameObject WaterObject;
     void Awake()
     {
         // seed
@@ -156,11 +181,7 @@ public class MapGenScript : MonoBehaviour
     {
         if (Keyboard.current.rKey.wasPressedThisFrame)
         {
-            if (randomSeed)
-            {
-                seed = Random.Range(-100000, 100000);
-            }
-            
+            if (randomSeed) seed = Random.Range(-100000, 100000);
             PopulateMap();
             GenerateResources();
             DisplayMap();
@@ -169,7 +190,6 @@ public class MapGenScript : MonoBehaviour
 
     void PopulateMap()
     {
-        physicalMapSize = new Vector2(mapWidth * cellSize, mapHeight * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER);
         // 1) First pass: compute positions/heights and track global min/max (at tile SURFACE)
         float[,] surfY = new float[mapWidth, mapHeight];
         Vector3[,] worldPos = new Vector3[mapWidth, mapHeight];
@@ -260,6 +280,7 @@ public class MapGenScript : MonoBehaviour
     {
         if (resourceSettings == null || resourceSettings.Length == 0) return;
 
+        var seed = Random.Range(-100000, 100000);
         for (int x = 0; x < mapWidth; x++)
             for (int z = 0; z < mapHeight; z++)
             {
@@ -271,7 +292,7 @@ public class MapGenScript : MonoBehaviour
                 {
                     var rs = resourceSettings[i];
                     int resourceTypeIndex = (int)rs.type;
-                    
+
                     if (rs.requireAboveWater && surfaceY < waterLevel)
                     {
                         tile.resources[resourceTypeIndex] = 0f;
@@ -284,10 +305,11 @@ public class MapGenScript : MonoBehaviour
                     }
 
                     float noiseValue;
-                    float nx = (x + Random.Range(-10000, 10000)) * rs.noiseScale * 0.001f;
-                    float ny = (z + Random.Range(-10000, 10000)) * rs.noiseScale * 0.001f;
+                    float nx = (x + seed) * rs.noiseScale;
+                    float ny = (z + seed) * rs.noiseScale;
                     noiseValue = Mathf.PerlinNoise(nx, ny);
                     noiseValue = Mathf.Clamp01(noiseValue);
+                    noiseValue = Mathf.Pow(noiseValue, rs.power);
                     noiseValue *= rs.maxAmount;
                     tile.resources[resourceTypeIndex] = noiseValue;
                 }
@@ -296,19 +318,15 @@ public class MapGenScript : MonoBehaviour
 
     void DisplayMap()
     {
-        // clear old water objects if they exist
+        //turn off the overlay
+        DisableResourceOverlay();
+        // clear old
         var oldWaters = GameObject.FindGameObjectsWithTag("ChunkWater");
-        foreach (var w in oldWaters)
-        {
-            Destroy(w);
-        }
-        // clear old chunks
-        for (int i = chunkParent.childCount - 1; i >= 0; i--)
-        {
-            Destroy(chunkParent.GetChild(i).gameObject);
-        }
+        foreach (var w in oldWaters) Destroy(w);
+        for (int i = chunkParent.childCount - 1; i >= 0; i--) Destroy(chunkParent.GetChild(i).gameObject);
+        chunks.Clear();
 
-        // build new chunks and water per chunk
+        //rebuild
         for (int cx = 0; cx < chunksX; cx++)
         {
             for (int cz = 0; cz < chunksZ; cz++)
@@ -424,41 +442,44 @@ public class MapGenScript : MonoBehaviour
 
     void BuildChunk(int cx, int cz)
     {
-        var verts = new List<Vector3>();
-        var normals = new List<Vector3>();
-        var uvs = new List<Vector2>();
-        var cols = new List<Color>();
-        var tris = new List<int>();
+        var verts  = new List<Vector3>();
+        var norms  = new List<Vector3>();
+        var uvs    = new List<Vector2>();
+        var cols   = new List<Color>();
+        var tris   = new List<int>();
+        var tileOrder = new List<Vector2Int>();
+
+        vertsPerTile = baseVerts.Length;
 
         // iterate tiles within this chunk
         for (int lx = 0; lx < chunkSize; lx++)
         {
             for (int lz = 0; lz < chunkSize; lz++)
             {
-
                 int wx = cx * chunkSize + lx;
                 int wz = cz * chunkSize + lz;
 
                 if (wx >= mapWidth || wz >= mapHeight) continue;
                 if (map[wx, wz] == null) continue;
-                var tile = map[wx, wz];
 
+                var tile = map[wx, wz];
                 int vertOffset = verts.Count;
 
                 // add vertices, normals, uvs, colors
                 for (int i = 0; i < baseVerts.Length; i++)
                 {
                     verts.Add(baseVerts[i] + tile.position);
-                    normals.Add(baseNormals[i]);
+                    norms.Add(baseNormals[i]);
                     uvs.Add(baseUVs[i]);
-                    cols.Add(tile.color);
+                    cols.Add(tile.color); // start with height color
                 }
 
-                // add triangles (shifted by vertOffset)
+                // add triangles
                 for (int i = 0; i < baseTris.Length; i++)
-                {
                     tris.Add(baseTris[i] + vertOffset);
-                }
+
+                // record tile order
+                tileOrder.Add(new Vector2Int(wx, wz));
             }
         }
 
@@ -469,7 +490,7 @@ public class MapGenScript : MonoBehaviour
             : UnityEngine.Rendering.IndexFormat.UInt16;
 
         mesh.SetVertices(verts);
-        mesh.SetNormals(normals);
+        mesh.SetNormals(norms);
         mesh.SetUVs(0, uvs);
         mesh.SetColors(cols);
         mesh.SetTriangles(tris, 0);
@@ -488,11 +509,117 @@ public class MapGenScript : MonoBehaviour
         var mc = go.AddComponent<MeshCollider>();
         mc.sharedMesh = mesh;
 
-        // free CPU copy
-        mesh.UploadMeshData(true);
+        // ✅ allow frequent color updates
+        mesh.MarkDynamic();
+        // ❌ do NOT call UploadMeshData(true) here
 
         go.isStatic = true;
         go.layer = LayerMask.NameToLayer("Map");
+
+        // register chunk for fast recoloring
+        var rec = new ChunkRecord
+        {
+            mesh = mesh,
+            cx = cx,
+            cz = cz,
+            tilesX = Mathf.Min(chunkSize, mapWidth - cx * chunkSize),
+            tilesZ = Mathf.Min(chunkSize, mapHeight - cz * chunkSize),
+            tileOrder = tileOrder,
+            colors = cols.ToArray() // initial colors (height)
+        };
+        chunks.Add(rec);
+    }
+
+    public void ApplyResourceOverlay(ResourceType type)
+    {
+        currentResourceOverlayType = type;
+        overlayEnabled = true;
+
+        // find min/max (for normalization) across the whole map for this resource
+        float minV = float.PositiveInfinity, maxV = float.NegativeInfinity;
+
+        for (int x = 0; x < mapWidth; x++)
+            for (int z = 0; z < mapHeight; z++)
+            {
+                var t = map[x, z];
+                if (t == null) continue;
+                float v = t[type];
+                if (v < minV) minV = v;
+                if (v > maxV) maxV = v;
+            }
+        if (!float.IsFinite(minV)) minV = 0f;
+        if (!float.IsFinite(maxV) || Mathf.Approximately(maxV, minV)) maxV = minV + 1f;
+
+        // recolor all chunks
+        for (int ci = 0; ci < chunks.Count; ci++)
+        {
+            var cr = chunks[ci];
+            var colors = cr.colors; // reuse buffer
+            int baseIndex = 0;
+
+            for (int i = 0; i < cr.tileOrder.Count; i++)
+            {
+                var p = cr.tileOrder[i];
+                var tile = map[p.x, p.y];
+                Color c;
+                if (tile == null)
+                {
+                    c = Color.clear;
+                }
+                else
+                {
+                    float v = tile[type];
+                    float tNorm = Mathf.InverseLerp(minV, maxV, v);
+                    c = Color.Lerp(Color.black, Color.white, tNorm);
+                }
+
+                // assign same color to all vertices of this tile
+                for (int vtx = 0; vtx < vertsPerTile; vtx++)
+                    colors[baseIndex + vtx] = c;
+
+                baseIndex += vertsPerTile;
+            }
+
+            cr.mesh.colors = colors;
+            chunks[ci] = cr; // store back (colors updated in-place)
+        }
+        //add a red color filter onto the camera
+        globalVolume.profile.TryGet(out ColorAdjustments colorAdjustments);
+        colorAdjustments.colorFilter.value = resourceSettings[(int)type].resourceColor;
+        colorAdjustments.colorFilter.overrideState = true;
+        //lower the opacity of all water objects to facilitate the visibility of the resources
+        waterMaterial.SetFloat("_Opacity", waterOpacity);
+    }
+
+    public void DisableResourceOverlay()
+    {
+        overlayEnabled = false;
+        globalVolume.profile.TryGet(out ColorAdjustments colorAdjustments);
+        colorAdjustments.colorFilter.overrideState = false;
+        waterMaterial.SetFloat("_Opacity", 1);
+        // recolor back to height gradient
+        for (int ci = 0; ci < chunks.Count; ci++)
+        {
+            var cr = chunks[ci];
+            var colors = cr.colors;
+            int baseIndex = 0;
+
+            for (int i = 0; i < cr.tileOrder.Count; i++)
+            {
+                var p = cr.tileOrder[i];
+                var tile = map[p.x, p.y];
+                Color c = (tile != null) ? tile.color : Color.clear;
+
+                for (int vtx = 0; vtx < vertsPerTile; vtx++)
+                    colors[baseIndex + vtx] = c;
+
+                baseIndex += vertsPerTile;
+            }
+
+            cr.mesh.colors = colors;
+
+            chunks[ci] = cr;
+        }
     }
 
     float GenerateHeightMap(int x, int y, float scale, int seed, float lacunarity, float gain, int octaves)
