@@ -21,17 +21,18 @@ public class BuildingControl : MonoBehaviour
 
     void Select()
     {
-        Ray ray = cam.ScreenPointToRay(Input.mousePosition);
-        RaycastHit hit;
-        if (Physics.Raycast(ray, out hit))
+        var pointer = UnityEngine.InputSystem.Pointer.current;
+        if (pointer == null) return;
+
+        Vector2 screenPos = pointer.position.ReadValue();
+        Ray ray = cam.ScreenPointToRay(screenPos);
+        if (Physics.Raycast(ray, out var hit))
         {
             selectedPosition = hit.point;
             var gridPosition = map.GetGridPosition(selectedPosition.x, selectedPosition.z);
             selectedTile = map.GetWorldPosition(gridPosition.x, gridPosition.y, false, true);
             if (gridPosition.x >= 0 && gridPosition.x < map.mapWidth && gridPosition.y >= 0 && gridPosition.y < map.mapHeight)
-            {
                 print(map.map[gridPosition.x, gridPosition.y].resources[0]);
-            }
         }
     }
 

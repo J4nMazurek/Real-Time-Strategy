@@ -403,8 +403,21 @@ MonoBehaviour:
   waterBuffer: 150
   stepHeight: 1
   stepHeightResolution: 2
+  TreeTypes:
+  - {fileID: 6598056930118756863, guid: 75aca1903600604469b408c8bde65250, type: 3}
+  - {fileID: 6193004489318787115, guid: bac840c4cb62fd24293e40a1ac7a9c58, type: 3}
+  - {fileID: -4322548645109116124, guid: e87266164d90deb4e8e8e3c256f10123, type: 3}
+  - {fileID: 6819965296991888009, guid: f435d44f90cbe304588f0882d01f7f4f, type: 3}
+  treeMinDistance: 0.6
+  treeTileBuffer: 1
+  forestMaterial: {fileID: 2100000, guid: f7a906e5d5c8d2d478ffff9a4b4cc789, type: 2}
+  minForestTerrainType: 3
+  maxForestTerrainType: 4
+  forestNoiseScale: 0.3
+  forestNoisePower: 1.5
+  forestNoiseThreshold: 0.4
   randomSeed: 1
-  seed: -34655
+  seed: -99423
   heightColorGradient:
     serializedVersion: 2
     key0: {r: 1, g: 0.92941177, b: 0.31199998, a: 1}
@@ -415,9 +428,9 @@ MonoBehaviour:
     key5: {r: 1, g: 1, b: 1, a: 0}
     key6: {r: 0, g: 0, b: 0, a: 0}
     key7: {r: 0, g: 0, b: 0, a: 0}
-    ctime0: 10023
-    ctime1: 16834
-    ctime2: 31097
+    ctime0: 0
+    ctime1: 6040
+    ctime2: 21588
     ctime3: 34824
     ctime4: 42148
     ctime5: 46646
@@ -435,19 +448,49 @@ MonoBehaviour:
     m_ColorSpace: -1
     m_NumColorKeys: 6
     m_NumAlphaKeys: 2
+  heightColorGradientBelow:
+    serializedVersion: 2
+    key0: {r: 0.47599998, g: 0.45695454, b: 0.29083598, a: 1}
+    key1: {r: 1, g: 0.92941177, b: 0.31199998, a: 1}
+    key2: {r: 0, g: 0, b: 0, a: 0}
+    key3: {r: 0, g: 0, b: 0, a: 0}
+    key4: {r: 0, g: 0, b: 0, a: 0}
+    key5: {r: 0, g: 0, b: 0, a: 0}
+    key6: {r: 0, g: 0, b: 0, a: 0}
+    key7: {r: 0, g: 0, b: 0, a: 0}
+    ctime0: 0
+    ctime1: 65535
+    ctime2: 0
+    ctime3: 0
+    ctime4: 0
+    ctime5: 0
+    ctime6: 0
+    ctime7: 0
+    atime0: 0
+    atime1: 65535
+    atime2: 0
+    atime3: 0
+    atime4: 0
+    atime5: 0
+    atime6: 0
+    atime7: 0
+    m_Mode: 0
+    m_ColorSpace: -1
+    m_NumColorKeys: 2
+    m_NumAlphaKeys: 2
   terrainTypeGradient:
     serializedVersion: 2
     key0: {r: 1, g: 0.92941177, b: 0.31199998, a: 1}
     key1: {r: 0.32941177, g: 0.8784314, b: 0.10980392, a: 1}
     key2: {r: 0.17254902, g: 0.56700003, b: 0.07450981, a: 0}
-    key3: {r: 0.29015195, g: 0.29015195, b: 0.29015195, a: 0}
-    key4: {r: 0.7169812, g: 0.7169812, b: 0.7169812, a: 0}
+    key3: {r: 0.18431373, g: 0.18431373, b: 0.18431373, a: 0}
+    key4: {r: 1, g: 1, b: 1, a: 0}
     key5: {r: 0, g: 0, b: 0, a: 0}
     key6: {r: 0, g: 0, b: 0, a: 0}
     key7: {r: 0, g: 0, b: 0, a: 0}
-    ctime0: 11565
-    ctime1: 16834
-    ctime2: 31097
+    ctime0: 3084
+    ctime1: 8738
+    ctime2: 32896
     ctime3: 42148
     ctime4: 65535
     ctime5: 0
@@ -465,6 +508,36 @@ MonoBehaviour:
     m_ColorSpace: -1
     m_NumColorKeys: 5
     m_NumAlphaKeys: 2
+  terrainTypeGradientBelow:
+    serializedVersion: 2
+    key0: {r: 0.47599998, g: 0.45695454, b: 0.29083598, a: 1}
+    key1: {r: 1, g: 0.92941177, b: 0.31199998, a: 1}
+    key2: {r: 0, g: 0, b: 0, a: 0}
+    key3: {r: 0, g: 0, b: 0, a: 0}
+    key4: {r: 0, g: 0, b: 0, a: 0}
+    key5: {r: 0, g: 0, b: 0, a: 0}
+    key6: {r: 0, g: 0, b: 0, a: 0}
+    key7: {r: 0, g: 0, b: 0, a: 0}
+    ctime0: 26728
+    ctime1: 65535
+    ctime2: 0
+    ctime3: 0
+    ctime4: 0
+    ctime5: 0
+    ctime6: 0
+    ctime7: 0
+    atime0: 0
+    atime1: 65535
+    atime2: 0
+    atime3: 0
+    atime4: 0
+    atime5: 0
+    atime6: 0
+    atime7: 0
+    m_Mode: 0
+    m_ColorSpace: -1
+    m_NumColorKeys: 2
+    m_NumAlphaKeys: 2
   cellSize: 1.7320508
   cellSizeFromPrefab: 1
   chunkSize: 50
@@ -479,7 +552,7 @@ MonoBehaviour:
     requireAboveWater: 0
     requireBelowWater: 0
     resourceColor: {r: 1, g: 0, b: 0, a: 0}
-  overlayEnabled: 1
+  overlayEnabled: 0
   waterMaterial: {fileID: 2100000, guid: b9b1adfe36bb2ac409fba101461d7989, type: 2}
   waterOpacity: 0.5
   globalVolume: {fileID: 832575518}
@@ -551,7 +624,7 @@ MonoBehaviour:
   tileMesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}
   layers: 1
   cloudHeight: 3
-  altitude: 40
+  altitude: 20
   cloudBuffer: 200
 --- !u!4 &1460198504
 Transform:

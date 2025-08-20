@@ -4,6 +4,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 
+
 [System.Serializable]
 public enum ResourceType { Oil, Metal }
 
@@ -25,7 +26,7 @@ public class ResourceSettings
     public Color resourceColor = Color.white;
 }
 
-public class HexTile
+public class Tile
 {
     public Vector3 position;
     public Color color;
@@ -38,7 +39,7 @@ public class HexTile
         set => resources[(int)type] = value;
     }
 
-    public HexTile(Vector3 pos, int terrain, Color? color = null)
+    public Tile(Vector3 pos, int terrain, Color? color = null)
     {
         position = pos;
         terrainType = terrain;
@@ -73,6 +74,17 @@ public class MapGenScript : MonoBehaviour
 
     public bool stepHeight;
     public float stepHeightResolution = 1;
+    [Header("Vegetation Generation")]
+    public Mesh[] TreeTypes;
+    public float treeMinDistance;
+    float treeMinScale = 0.9f,treeMaxScale = 1.1f;
+    public float treeTileBuffer;
+    public Material forestMaterial;
+    public int minForestTerrainType = 1;
+    public int maxForestTerrainType = 999;
+    public float forestNoiseScale = 1f;
+    public float forestNoisePower = 2f;
+    public float forestNoiseThreshold = 0.5f;
 
     [Header("Seed")]
     public bool randomSeed;
@@ -80,8 +92,12 @@ public class MapGenScript : MonoBehaviour
     public int seed = 0;
 
     [Header("Map Gradients")]
-    public Gradient heightColorGradient;
-    public Gradient terrainTypeGradient;
+    public Gradient heightColorGradient;          // ABOVE water
+    public Gradient heightColorGradientBelow;     // BELOW water
+
+    public Gradient terrainTypeGradient;          // ABOVE water
+    public Gradient terrainTypeGradientBelow;     // BELOW water
+
 
     [Header("Display")]
     public float cellSize = 1.0f;
@@ -119,7 +135,8 @@ public class MapGenScript : MonoBehaviour
     public Vector2 physicalMapSize => new Vector2(mapWidth * cellSize, mapHeight * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER);
     private int chunksX;
     private int chunksZ;
-    public HexTile[,] map;
+    public Tile[,] map;
+    public GameObject[,] tileObjects;
 
     // prefab mesh data
     private Mesh tileMesh;
@@ -140,7 +157,8 @@ public class MapGenScript : MonoBehaviour
             seed = Random.Range(-100000, 100000);
 
         // allocate map
-        map = new HexTile[mapWidth, mapHeight];
+        map = new Tile[mapWidth, mapHeight];
+        tileObjects = new GameObject[mapWidth, mapHeight];
 
         // compute how many chunks
         chunksX = Mathf.CeilToInt((float)mapWidth / chunkSize);
@@ -174,6 +192,7 @@ public class MapGenScript : MonoBehaviour
 
         PopulateMap();
         GenerateResources();
+        GenerateVegetation();
         DisplayMap();
     }
 
@@ -184,16 +203,16 @@ public class MapGenScript : MonoBehaviour
             if (randomSeed) seed = Random.Range(-100000, 100000);
             PopulateMap();
             GenerateResources();
+            GenerateVegetation();
             DisplayMap();
         }
     }
 
     void PopulateMap()
     {
-        // 1) First pass: compute positions/heights and track global min/max (at tile SURFACE)
+        // 1) First pass: positions/heights & global min/max (at tile SURFACE)
         float[,] surfY = new float[mapWidth, mapHeight];
         Vector3[,] worldPos = new Vector3[mapWidth, mapHeight];
-        int[,] terrType = new int[mapWidth, mapHeight];
 
         float globalMin = float.MaxValue;
         float globalMax = float.MinValue;
@@ -203,7 +222,7 @@ public class MapGenScript : MonoBehaviour
             for (int z = 0; z < mapHeight; z++)
             {
                 var pos = GetWorldPosition(x, z, true);
-                pos.y   = GenerateHeightMap(x, z, mapScale, seed, mapLacunarity, mapGain, mapOctaves);
+                pos.y = GenerateHeightMap(x, z, mapScale, seed, mapLacunarity, mapGain, mapOctaves);
 
                 if (useFalloff)
                 {
@@ -211,38 +230,40 @@ public class MapGenScript : MonoBehaviour
                     pos.y *= falloff;
                 }
 
-                // terrain type can be based on raw height or modified height — keeping your order:
-                int terrainType = CalculateTerrainTypes(pos.y);
-
                 pos.y = MapHeightModifier(pos.y);
+                if (stepHeight) pos.y = Mathf.Round(pos.y * stepHeightResolution) / stepHeightResolution;
 
-                if(stepHeight)  pos.y = Mathf.Round(pos.y * stepHeightResolution) / stepHeightResolution;
-
-                // surface height (not mesh center)
                 float surface = pos.y + tileTopYOffset;
 
-                surfY[x, z]   = surface;
-                worldPos[x, z]= pos;
-                terrType[x, z]= terrainType;
+                surfY[x, z] = surface;
+                worldPos[x, z] = pos;
 
                 if (surface < globalMin) globalMin = surface;
                 if (surface > globalMax) globalMax = surface;
             }
         }
 
-        // Guard against flat maps
-        float denom = (globalMax - globalMin);
-        if (denom <= 1e-6f) denom = 1f;
-
-        // 2) Second pass: colorize from 0..1 using ONLY heightColorGradient
+        // 2) Second pass: color & terrain type from split ranges
         for (int x = 0; x < mapWidth; x++)
         {
             for (int z = 0; z < mapHeight; z++)
             {
-                float t = (surfY[x, z] - globalMin) / denom;   // 0 at lowest, 1 at highest
-                var col = heightColorGradient.Evaluate(Mathf.Clamp01(t));
+                float s = surfY[x, z];
+                Color col;
 
-                map[x, z] = new HexTile(worldPos[x, z], terrType[x, z], col);
+                if (s <= waterLevel)
+                {
+                    float tBelow = Mathf.InverseLerp(globalMin, waterLevel, s); // 0..1 within [min, water]
+                    col = heightColorGradientBelow.Evaluate(Mathf.Clamp01(tBelow));
+                }
+                else
+                {
+                    float tAbove = Mathf.InverseLerp(waterLevel, globalMax, s); // 0..1 within [water, max]
+                    col = heightColorGradient.Evaluate(Mathf.Clamp01(tAbove));
+                }
+
+                int terrainType = CalculateTerrainTypeCombined(s, globalMin, waterLevel, globalMax);
+                map[x, z] = new Tile(worldPos[x, z], terrainType, col);
             }
         }
     }
@@ -314,6 +335,84 @@ public class MapGenScript : MonoBehaviour
                     tile.resources[resourceTypeIndex] = noiseValue;
                 }
             }
+    }
+
+    void GenerateVegetation()
+    {
+        //Pick forest tiles
+        var seed = Random.Range(-100000, 100000);
+        for (int x = 0; x < mapWidth; x++)
+            for (int y = 0; y < mapHeight; y++)
+            {
+                Destroy(tileObjects[x, y]);
+                tileObjects[x, y] = null;
+                float noiseValue;
+                float nx = (x + seed) * forestNoiseScale;
+                float ny = (y + seed) * forestNoiseScale;
+                noiseValue = Mathf.PerlinNoise(nx, ny);
+                noiseValue = Mathf.Clamp01(noiseValue);
+                noiseValue = Mathf.Pow(noiseValue, forestNoisePower);
+                if (noiseValue > forestNoiseThreshold && map[x, y].terrainType >= minForestTerrainType && map[x, y].terrainType <= maxForestTerrainType)
+                {
+                    var forest = new GameObject("Forest");
+                    Mesh mesh = GenerateForest(x, y);
+                    forest.AddComponent<MeshFilter>().mesh = mesh;
+                    forest.AddComponent<MeshRenderer>().material = forestMaterial;
+                    forest.isStatic = true;
+                    forest.transform.position = GetWorldPosition(x, y, false, true);
+                    tileObjects[x, y] = forest;
+                    map[x, y].color = map[x, y].color * 0.7f;// Darken the tile color
+                }
+            }
+    }
+
+    Mesh GenerateForest(int mapX, int mapY)
+    {
+        // Need some tree meshes
+        if (TreeTypes == null || TreeTypes.Length == 0)
+            return new Mesh();
+     
+        var combines = new List<CombineInstance>();
+        int vertexSum = 0;
+
+        float treeCellSize = cellSize - treeTileBuffer;
+        float r = treeCellSize, a = treeCellSize * HEX_VERTICAL_OFFSET_MULTIPLIER, dx = treeMinDistance, dy = treeMinDistance * HEX_VERTICAL_OFFSET_MULTIPLIER;
+        Vector2[] poly = { new Vector2(0f, r), new Vector2(a, r*0.5f), new Vector2(a, -r*0.5f), new Vector2(0f, -r), new Vector2(-a, -r*0.5f), new Vector2(-a, r*0.5f) };
+        for (int row = 0; ; row++)
+        {
+            //bunch of mumbo jumbo btw
+            float z = -r + row * dy; if (z > r) break;
+            float xOffset = (row % 2 == 0) ? 0f : dx * 0.5f;
+            for (float x = -a - dx; x <= a + dx; x += dx)
+            {
+                var p = new Vector2(x + xOffset, z);
+                bool inside = false;
+                for (int i = 0, j = poly.Length - 1; i < poly.Length; j = i++)
+                    if (((poly[i].y > p.y) != (poly[j].y > p.y)) && (p.x < (poly[j].x - poly[i].x) * (p.y - poly[i].y) / ((poly[j].y - poly[i].y) + 1e-12f) + poly[i].x)) inside = !inside;
+                if (inside)//! <-- valid point inside the hex added here
+                {
+                    var m = TreeTypes[Random.Range(0, TreeTypes.Length)];
+                    vertexSum += m.vertexCount;
+                    combines.Add(new CombineInstance()
+                    {
+                        mesh = m,
+                        transform = Matrix4x4.TRS(new Vector3(p.x, 0f, p.y), Quaternion.Euler(0,Random.Range(-180f, 180f),0), Vector3.one * Random.Range(treeMinScale,treeMaxScale))
+                    });
+                }
+
+            }
+        }
+
+
+        var forest = new Mesh();
+        if (combines.Count == 0) return forest;
+        forest.indexFormat = (vertexSum > 65535)
+            ? UnityEngine.Rendering.IndexFormat.UInt32
+            : UnityEngine.Rendering.IndexFormat.UInt16;
+
+        forest.CombineMeshes(combines.ToArray(), mergeSubMeshes: true, useMatrices: true, hasLightmapData: false);
+        forest.RecalculateBounds();
+        return forest;
     }
 
     void DisplayMap()
@@ -666,6 +765,36 @@ public class MapGenScript : MonoBehaviour
         return Mathf.Clamp(falloffValue, minFalloff, 1f);
     }
 
+    int IndexFromGradient(Gradient g, float t)
+    {
+        var keys = g.colorKeys;
+        if (keys == null || keys.Length == 0) return 0;
+        if (t <= keys[0].time) return 0;
+        for (int i = 1; i < keys.Length; i++)
+            if (t <= keys[i].time) return i;
+        return keys.Length - 1;
+    }
+
+    int CalculateTerrainTypeCombined(float surfaceY, float globalMin, float waterLevel, float globalMax)
+    {
+        int belowCount = terrainTypeGradientBelow.colorKeys.Length;
+        int aboveCount = terrainTypeGradient.colorKeys.Length;
+
+        if (surfaceY <= waterLevel)
+        {
+            float tBelow = Mathf.InverseLerp(globalMin, waterLevel, surfaceY);   // 0..1
+            int idxLocal = IndexFromGradient(terrainTypeGradientBelow, tBelow);  // 0..belowCount-1
+            return idxLocal;                                                     // stays 0..belowCount-1
+        }
+        else
+        {
+            float tAbove = Mathf.InverseLerp(waterLevel, globalMax, surfaceY);   // 0..1
+            int idxLocal = IndexFromGradient(terrainTypeGradient, tAbove);       // 0..aboveCount-1
+            return belowCount + idxLocal;                                        // continues after below segment
+        }
+    }
+
+
     public Vector2Int GetGridPosition(float worldX, float worldZ)
     {
         float rawY = worldZ / (cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER);
@@ -705,14 +834,12 @@ public class MapGenScript : MonoBehaviour
 
     public Vector3 GetWorldPosition(int xPos, int zPos, bool ignoreHeight = false, bool HighestPoint = false)
     {
-
-        var Renderer = hexTilePrefab.GetComponent<Renderer>();
         return new Vector3(xPos, 0, 0) * cellSize
              + new Vector3(0, 0, zPos) * cellSize * HEX_VERTICAL_OFFSET_MULTIPLIER
              + ((zPos % 2) == 1
                 ? new Vector3(1, 0, 0) * cellSize * 0.5f
                 : Vector3.zero)
              + (ignoreHeight || xPos >= mapWidth || zPos >= mapHeight || xPos < 0 || zPos < 0 || map[xPos, zPos] == null ? Vector3.zero :
-             new Vector3(0, map[xPos, zPos].position.y + (HighestPoint ? Renderer.bounds.center.y + Renderer.bounds.extents.y : 0), 0));
+             new Vector3(0, map[xPos, zPos].position.y + (HighestPoint ? tileTopYOffset : 0), 0));
     }
 }
